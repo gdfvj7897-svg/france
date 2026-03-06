@@ -5,12 +5,13 @@
 // ============================================
 // ADMIN CREDENTIALS - Change these!
 // ============================================
-export const ADMIN_USERNAME = 'admin';
-export const ADMIN_PASSWORD = 'admin123';
+export const ADMIN_USERNAME = 'johnlick';
+export const ADMIN_PASSWORD = 'israel';
 // ============================================
 
 // Session token secret (used for JWT-like tokens)
-export const ADMIN_SECRET = 'your-super-secret-key-change-this';
+export const ADMIN_SECRET = '123123123';
 
 // Token expiration (24 hours)
 export const TOKEN_EXPIRATION = 24 * 60 * 60 * 1000;
+
