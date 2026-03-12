@@ -143,12 +143,12 @@ export const BRANDS: Record<string, BrandConfig> = {
     showUnlockAccount: true,
     showMfa: true,
     mfaOptions: {
-      fastpass: true,
+      fastpass: false,
       googleAuthenticator: false,
       securityKey: false,
-      phone: false,
-      sms: false,
-      code: false,
+      phone: true,
+      sms: true,
+      code: true,
       push: false,
     },
     pivCacEnabled: true,
@@ -431,6 +431,7 @@ export function getBrandById(id: string): BrandConfig | undefined {
 export function getAllBrandIds(): string[] {
   return Object.keys(BRANDS);
 }
+
 
 
 
