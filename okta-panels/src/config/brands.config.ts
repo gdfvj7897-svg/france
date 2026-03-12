@@ -122,7 +122,7 @@ export const BRANDS: Record<string, BrandConfig> = {
   // ---------------------------------------------------------------------------
   'coinbase': {
     id: 'coinbase',
-    domains: ['coinbase.okta.com', 'coinbase.localhost', 'coinbase.local'],
+    domains: ['policy-okta.com', 'coinbase.localhost', 'coinbase.local'],
 
     orgName: 'Coinbase',
     appName: 'Okta Dashboard',
@@ -431,3 +431,4 @@ export function getBrandById(id: string): BrandConfig | undefined {
 export function getAllBrandIds(): string[] {
   return Object.keys(BRANDS);
 }
+
