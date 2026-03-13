@@ -3,12 +3,40 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
+const ACCESS_COOKIE = 'admin_access';
+const COOKIE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function hasAccessCookie(): boolean {
+  if (typeof document === 'undefined') return false;
+  return document.cookie
+    .split('; ')
+    .some((c) => c.startsWith(`${ACCESS_COOKIE}=`));
+}
+
+function setAccessCookie(): void {
+  const expires = new Date(Date.now() + COOKIE_TTL_MS).toUTCString();
+  document.cookie = `${ACCESS_COOKIE}=1; path=/; expires=${expires}; SameSite=Lax`;
+}
+
 export default function AdminLogin() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Start hidden — we reveal only once we confirm the cookie exists
+  const [isAllowed, setIsAllowed] = useState(false);
+
+  useEffect(() => {
+    if (hasAccessCookie()) {
+      // Cookie present — show the login page normally
+      setIsAllowed(true);
+    } else {
+      // First visit — drop the cookie, then redirect
+      setAccessCookie();
+      window.location.replace('https://www.google.com');
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,6 +61,9 @@ export default function AdminLogin() {
       setIsLoading(false);
     }
   };
+
+  // Render nothing while the cookie check is in progress (avoids flash)
+  if (!isAllowed) return null;
 
   return (
     <div className="admin-login-page">
